@@ -1,6 +1,8 @@
 {
     "service_port": 5042,
-    "model_path": "/home/text-generation/models/whisper/podlodka-turbo",
+    "model_type": "gigaam",
+    "model_path": "/home/text-generation/models/whisper/gigaAM-v3",
+    "gigaam_variant": "v3_e2e_rnnt",
     "language": "russian",
     "enable_history": true,
     "max_history_days": 30,

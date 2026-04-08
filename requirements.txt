@@ -18,3 +18,7 @@ transformers==4.49.0
 accelerate==1.4.0
 python-magic==0.4.27
 requests==2.32.3
+
+# GigaAM (для model_type=gigaam)
+gigaam @ git+https://github.com/salute-developers/GigaAM.git
+pyannote-audio>=3.1  # для transcribe_longform (аудио > 25 секунд)

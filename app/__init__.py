@@ -12,7 +12,7 @@ from flask_cors import CORS
 from typing import Dict
 import waitress
 
-from .core.transcriber import WhisperTranscriber
+from .core import create_transcriber
 from .core.config import load_config
 from .routes import Routes
 from .infrastructure.validation import FileValidator
@@ -56,7 +56,7 @@ class WhisperServiceAPI:
         self.port = self.config["service_port"]
         
         # Инициализация компонентов
-        self.transcriber = WhisperTranscriber(self.config)
+        self.transcriber = create_transcriber(self.config)
         self.file_validator = FileValidator(self.config)
         
         # Настройка логирования запросов

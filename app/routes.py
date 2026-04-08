@@ -61,7 +61,7 @@ class Routes:
                 "data": [{
                     "id": os.path.basename(self.config["model_path"]),
                     "object": "model",
-                    "owned_by": "openai",
+                    "owned_by": "ai-sage" if self.config.get("model_type") == "gigaam" else "openai",
                     "permissions": []
                 }],
                 "object": "list"
@@ -74,7 +74,7 @@ class Routes:
                 return jsonify({
                     "id": model_id,
                     "object": "model",
-                    "owned_by": "openai",
+                    "owned_by": "ai-sage" if self.config.get("model_type") == "gigaam" else "openai",
                     "permissions": []
                 }), 200
             return jsonify({
