@@ -19,7 +19,7 @@ def create_transcriber(config: Dict):
     model_type = config.get("model_type", "whisper")
 
     if model_type == "whisper":
-        from .transcriber import WhisperTranscriber
+        from .whisper_transcriber import WhisperTranscriber
         return WhisperTranscriber(config)
     elif model_type == "gigaam":
         from .gigaam_transcriber import GigaAMTranscriber

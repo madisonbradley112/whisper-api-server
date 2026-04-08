@@ -27,11 +27,18 @@ def load_config(config_path: str) -> Dict:
     try:
         with open(config_path, "r", encoding="utf-8") as f:
             config = json.load(f)
+
         # Валидация типа модели
         model_type = config.get("model_type", "whisper")
         if model_type not in ("whisper", "gigaam"):
             raise ValueError(f"Неизвестный model_type в конфигурации: {model_type}. "
                              f"Допустимые значения: whisper, gigaam")
+
+        # Мержим секцию активной модели в плоский конфиг —
+        # все модули продолжают читать config["model_path"], config["language"] и т.д.
+        models = config.pop("models", {})
+        model_config = models.get(model_type, {})
+        config.update(model_config)
 
         logger.info("Конфигурация успешно загружена из %s (model_type=%s)", config_path, model_type)
         return config

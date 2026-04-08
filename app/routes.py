@@ -18,7 +18,7 @@ from .infrastructure.storage import cleanup_temp_files
 from .infrastructure.async_tasks import transcribe_audio_async, task_manager
 
 if TYPE_CHECKING:
-    from .core.transcriber import WhisperTranscriber
+    from .core.whisper_transcriber import WhisperTranscriber
     from .infrastructure.validation import FileValidator
 
 logger = logging.getLogger('app.routes')
