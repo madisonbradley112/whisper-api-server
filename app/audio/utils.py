@@ -58,7 +58,7 @@ def get_audio_duration(file_path: str) -> float:
     if not os.path.exists(file_path):
         raise Exception(f"Файл не существует: {file_path}")
 
-    # Две стратегии: format=duration (быстрая) и stream=duration (fallback для webm и др.)
+    # Стратегия 1-2: быстрые метаданные (format/stream duration)
     strategies = [
         ["-show_entries", "format=duration"],
         ["-show_entries", "stream=duration", "-select_streams", "a:0"],
@@ -78,5 +78,21 @@ def get_audio_duration(file_path: str) -> float:
                 return float(value)
         except (subprocess.TimeoutExpired, subprocess.CalledProcessError, ValueError, TypeError):
             continue
+
+    # Стратегия 3: полное декодирование (медленнее, но работает всегда)
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-select_streams", "a:0",
+        "-show_entries", "packet=pts_time",
+        "-of", "csv=p=0",
+        file_path,
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=30)
+        lines = [l.strip() for l in result.stdout.strip().split('\n') if l.strip()]
+        if lines:
+            return float(lines[-1])
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError, ValueError, TypeError, IndexError):
+        pass
 
     raise Exception(f"Не удалось определить длительность файла {file_path}")

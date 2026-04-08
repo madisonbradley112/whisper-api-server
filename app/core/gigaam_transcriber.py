@@ -215,8 +215,12 @@ class GigaAMTranscriber:
         start_time = time.time()
         logger.info("Начало обработки файла: %s", input_path)
 
-        # Определяем длительность аудио
-        duration = get_audio_duration(input_path)
+        # Определяем длительность аудио (нефатально — при ошибке считаем короткое аудио)
+        try:
+            duration = get_audio_duration(input_path)
+        except Exception as e:
+            logger.warning("Не удалось определить длительность: %s", e)
+            duration = 0.0
 
         # Транскрибация (GigaAM сам загружает и обрабатывает аудио)
         result = self.transcribe(input_path, return_timestamps=return_timestamps,
