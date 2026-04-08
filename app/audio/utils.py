@@ -58,20 +58,25 @@ def get_audio_duration(file_path: str) -> float:
     if not os.path.exists(file_path):
         raise Exception(f"Файл не существует: {file_path}")
 
-    cmd = [
-        "ffprobe",
-        "-v", "error",
-        "-show_entries", "format=duration",
-        "-of", "default=noprint_wrappers=1:nokey=1",
-        file_path
+    # Две стратегии: format=duration (быстрая) и stream=duration (fallback для webm и др.)
+    strategies = [
+        ["-show_entries", "format=duration"],
+        ["-show_entries", "stream=duration", "-select_streams", "a:0"],
     ]
 
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=10)
-        return float(result.stdout.strip())
-    except subprocess.TimeoutExpired:
-        raise Exception(f"Таймаут при определении длительности файла {file_path}")
-    except subprocess.CalledProcessError as e:
-        raise Exception(f"Ошибка ffprobe для файла {file_path}: {e.stderr}")
-    except (ValueError, TypeError) as e:
-        raise Exception(f"Ошибка при преобразовании длительности для файла {file_path}: {e}")
+    for strategy in strategies:
+        cmd = [
+            "ffprobe", "-v", "error",
+            *strategy,
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            file_path,
+        ]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=10)
+            value = result.stdout.strip().split('\n')[0]
+            if value and value != "N/A":
+                return float(value)
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, ValueError, TypeError):
+            continue
+
+    raise Exception(f"Не удалось определить длительность файла {file_path}")

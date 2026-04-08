@@ -87,7 +87,7 @@ class GigaAMTranscriber:
 
     def transcribe(self, audio_path: str, return_timestamps: bool = None,
                    language: str = None, temperature: float = None,
-                   prompt: str = None) -> Union[str, Dict]:
+                   prompt: str = None, _duration: float = None) -> Union[str, Dict]:
         """
         Транскрибация аудиофайла.
 
@@ -97,6 +97,7 @@ class GigaAMTranscriber:
             language: Не используется (для совместимости интерфейса).
             temperature: Не используется (для совместимости интерфейса).
             prompt: Не используется (для совместимости интерфейса).
+            _duration: Предвычисленная длительность (внутренний параметр, чтобы не считать дважды).
 
         Returns:
             В зависимости от параметра return_timestamps:
@@ -112,7 +113,7 @@ class GigaAMTranscriber:
 
         try:
             # Определяем длительность для выбора метода транскрибации
-            duration = get_audio_duration(audio_path)
+            duration = _duration if _duration is not None else get_audio_duration(audio_path)
             use_longform = duration > _LONGFORM_THRESHOLD_S
 
             with self._inference_lock:
@@ -220,7 +221,7 @@ class GigaAMTranscriber:
         # Транскрибация (GigaAM сам загружает и обрабатывает аудио)
         result = self.transcribe(input_path, return_timestamps=return_timestamps,
                                  language=language, temperature=temperature,
-                                 prompt=prompt)
+                                 prompt=prompt, _duration=duration)
 
         elapsed_time = time.time() - start_time
         logger.info("Обработка и транскрибация завершены за %.2f секунд", elapsed_time)
