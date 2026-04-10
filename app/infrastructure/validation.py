@@ -20,6 +20,7 @@ class ValidationError(Exception):
 _MIME_EQUIVALENTS = {
     "audio/x-wav": "audio/wav",
     "audio/x-m4a": "audio/mp4",
+    "audio/x-hx-aac-adts": "audio/aac",
     "video/webm": "audio/webm",
     "video/ogg": "audio/ogg",
     "video/mp4": "audio/mp4",
