@@ -5,6 +5,7 @@ GigaAM самостоятельно обрабатывает аудио чере
 (sox-нормализация, добавление тишины) не используется.
 """
 
+import os
 import time
 import threading
 import traceback
@@ -336,7 +337,16 @@ class GigaAMTranscriber:
             Кортеж (результат транскрибации, длительность аудио в секундах).
         """
         start_time = time.time()
-        logger.info("Начало обработки файла: %s", input_path)
+
+        # Диагностика входного файла
+        try:
+            file_size = os.path.getsize(input_path)
+            with open(input_path, "rb") as f:
+                magic = f.read(16)
+            logger.info("Начало обработки файла: %s (размер: %d байт, magic: %s)",
+                        input_path, file_size, magic.hex())
+        except OSError as e:
+            logger.warning("Не удалось прочитать метаданные файла %s: %s", input_path, e)
 
         # Определяем длительность аудио (нефатально — при ошибке используем longform)
         duration_known = True
