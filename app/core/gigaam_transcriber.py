@@ -58,8 +58,29 @@ class GigaAMTranscriber:
             Exception: Если не удалось загрузить модель.
         """
         import gigaam
+        import gigaam.preprocess as gigaam_preprocess
+        from subprocess import CalledProcessError
 
         logger.info("Загрузка модели GigaAM: %s", self.model_path)
+
+        # Патчим load_audio: оригинал теряет stderr от ffmpeg при ошибке,
+        # что делает невозможной диагностику проблем с аудиофайлами.
+        _original_load_audio = gigaam_preprocess.load_audio
+
+        def _load_audio_with_logging(audio_path, sample_rate=gigaam_preprocess.SAMPLE_RATE):
+            try:
+                return _original_load_audio(audio_path, sample_rate)
+            except RuntimeError as e:
+                cause = e.__cause__
+                if isinstance(cause, CalledProcessError):
+                    stderr = cause.stderr.decode("utf-8", errors="replace") if cause.stderr else "(пусто)"
+                    logger.error(
+                        "ffmpeg не смог декодировать '%s' (exit code %d). stderr:\n%s",
+                        audio_path, cause.returncode, stderr
+                    )
+                raise
+
+        gigaam_preprocess.load_audio = _load_audio_with_logging
 
         try:
             self.model = gigaam.load_model(self.model_path)
