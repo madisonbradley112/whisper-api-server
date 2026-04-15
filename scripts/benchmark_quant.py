@@ -19,6 +19,8 @@
 
 import argparse
 import os
+import subprocess
+import sys
 import time
 import traceback
 from pathlib import Path
@@ -36,11 +38,12 @@ AUDIO_EXTENSIONS = {".wav", ".mp3", ".ogg", ".flac", ".m4a", ".opus", ".aac"}
 def convert_model(src_path: str, out_dir: str, quantization: str) -> str:
     """Конвертирует HF-модель в CTranslate2 формат с заданной квантизацией.
 
+    Запускает конвертацию в подпроцессе с отключённым flash_attn, чтобы избежать
+    конфликта ABI между flash_attn_2_cuda и ctranslate2.
+
     Возвращает путь к сконвертированной модели.
     Пропускает конвертацию, если директория уже существует и не пуста.
     """
-    import ctranslate2
-
     model_name = Path(src_path).name
     dest = os.path.join(out_dir, f"{model_name}-ct2-{quantization}")
 
@@ -51,11 +54,41 @@ def convert_model(src_path: str, out_dir: str, quantization: str) -> str:
     print(f"  Конвертация в {quantization} → {dest}")
     t = time.time()
 
-    converter = ctranslate2.converters.TransformersConverter(
-        src_path,
-        low_cpu_mem_usage=True,
+    # Конвертация в подпроцессе: flash_attn мокируется до импорта ctranslate2,
+    # чтобы обойти конфликт символов ABI (flash_attn_2_cuda vs ctranslate2 libtorch).
+    script = f"""
+import sys, types
+
+def _stub(name):
+    m = types.ModuleType(name)
+    m.__spec__ = None
+    return m
+
+for _n in ['flash_attn', 'flash_attn_2_cuda',
+           'flash_attn.flash_attn_interface',
+           'flash_attn.bert_padding',
+           'flash_attn.flash_attn_varlen_func']:
+    sys.modules[_n] = _stub(_n)
+
+bp = sys.modules['flash_attn.bert_padding']
+bp.index_first_axis = lambda *a, **k: None
+bp.pad_input = lambda *a, **k: None
+bp.unpad_input = lambda *a, **k: None
+
+import ctranslate2
+converter = ctranslate2.converters.TransformersConverter(
+    {src_path!r}, low_cpu_mem_usage=True,
+)
+converter.convert({dest!r}, quantization={quantization!r})
+print("ok")
+"""
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True, text=True,
     )
-    converter.convert(dest, quantization=quantization)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr[-3000:])  # последние 3000 символов ошибки
 
     print(f"  Готово за {time.time() - t:.0f}с")
     return dest
