@@ -285,12 +285,14 @@ def run_benchmark_hf(model_path: str, audio_files: list[str], language: str, run
         audio_np = np.frombuffer(result_decode.stdout, dtype=np.int16).astype(np.float32) / 32768.0
         audio_duration = len(audio_np) / 16000.0
         gen_kwargs = {"language": language, "max_new_tokens": 384, "temperature": 0.01}
-        input_data = {"raw": audio_np, "sampling_rate": 16000}
 
         for run_i in range(runs + 1):
             t0 = time.time()
 
-            result = asr_pipeline(input_data, generate_kwargs=gen_kwargs)
+            result = asr_pipeline(
+                {"raw": audio_np.copy(), "sampling_rate": 16000},
+                generate_kwargs=gen_kwargs,
+            )
             elapsed = time.time() - t0
             peak_vram_gb = (get_gpu_memory_mb() - vram_before) / 1024
 
