@@ -113,12 +113,23 @@ def convert_model(src_path: str, out_dir: str, quantization: str) -> str:
         env = os.environ.copy()
         env["PYTHONPATH"] = tmpdir + (":" + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
 
-        script = (
-            "import ctranslate2; "
-            f"c = ctranslate2.converters.TransformersConverter({src_path!r}, low_cpu_mem_usage=True); "
-            f"c.convert({dest!r}, quantization={quantization!r}); "
-            "print('ok')"
-        )
+        # Monkey-patch: ctranslate2 4.7.1 передаёт dtype= вместо torch_dtype= в from_pretrained,
+        # что несовместимо с transformers 4.49.0 — WhisperForConditionalGeneration.__init__
+        # не принимает dtype как аргумент конструктора.
+        script = """
+import ctranslate2
+
+_orig = ctranslate2.converters.TransformersConverter.load_model
+def _patched(self, model_class, model_name_or_path, **kwargs):
+    if 'dtype' in kwargs:
+        kwargs['torch_dtype'] = kwargs.pop('dtype')
+    return _orig(self, model_class, model_name_or_path, **kwargs)
+ctranslate2.converters.TransformersConverter.load_model = _patched
+
+c = ctranslate2.converters.TransformersConverter({src!r}, low_cpu_mem_usage=True)
+c.convert({dest!r}, quantization={quant!r})
+print("ok")
+""".format(src=src_path, dest=dest, quant=quantization)
         result = subprocess.run(
             [sys.executable, "-c", script],
             capture_output=True, text=True, env=env,
