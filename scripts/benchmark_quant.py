@@ -55,17 +55,24 @@ def _build_fake_flash_attn(base_dir: str) -> None:
             "flash_attn_with_kvcache = None\n"
         )
 
-    # Субмодули, которые импортирует transformers.modeling_flash_attention_utils
+    # Субмодули, которые импортирует transformers
     submodules = {
         "bert_padding": "index_first_axis = None\npad_input = None\nunpad_input = None\n",
         "flash_attn_interface": "flash_attn_func = None\nflash_attn_varlen_func = None\n",
-        "layers": "RotaryEmbedding = None\n",
     }
     for name, content in submodules.items():
         subdir = os.path.join(pkg, name)
         os.makedirs(subdir)
         with open(os.path.join(subdir, "__init__.py"), "w") as f:
             f.write(content)
+
+    # flash_attn.layers — отдельный субпакет с rotary и другими модулями
+    layers_dir = os.path.join(pkg, "layers")
+    os.makedirs(layers_dir)
+    with open(os.path.join(layers_dir, "__init__.py"), "w") as f:
+        f.write("RotaryEmbedding = None\n")
+    with open(os.path.join(layers_dir, "rotary.py"), "w") as f:
+        f.write("RotaryEmbedding = None\n")
 
     # flash_attn_2_cuda как отдельный модуль (не субпакет flash_attn)
     with open(os.path.join(base_dir, "flash_attn_2_cuda.py"), "w") as f:
