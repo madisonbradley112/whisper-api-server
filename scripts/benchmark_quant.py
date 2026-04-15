@@ -2,7 +2,7 @@
 """
 Бенчмарк квантизации Whisper-модели через CTranslate2 / faster-whisper.
 
-Конвертирует исходную HuggingFace-модель в 4 формата (float16, int8_float16, int8, int4)
+Конвертирует исходную HuggingFace-модель в 4 формата (float16, int8_float16, int8, int8_bfloat16)
 и прогоняет каждый вариант на всех аудиофайлах из указанной директории.
 Выводит таблицу сравнения скорости, потребления VRAM и RTF,
 а также транскрипции для визуальной оценки качества.
@@ -18,6 +18,7 @@
 """
 
 import argparse
+import glob
 import os
 import shutil
 import subprocess
@@ -27,9 +28,7 @@ import time
 import traceback
 from pathlib import Path
 
-import torch
-
-QUANTIZATIONS = ["float16", "int8_float16", "int8", "int4"]
+QUANTIZATIONS = ["float16", "int8_float16", "int8", "int8_bfloat16"]
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".ogg", ".flac", ".m4a", ".opus", ".aac"}
 
 
@@ -140,6 +139,10 @@ print("ok")
     if result.returncode != 0:
         raise RuntimeError(result.stderr[-3000:])
 
+    pp_config = os.path.join(src_path, "preprocessor_config.json")
+    if os.path.exists(pp_config):
+        shutil.copy2(pp_config, dest)
+
     print(f"  Готово за {time.time() - t:.0f}с")
     return dest
 
@@ -157,6 +160,15 @@ def get_audio_files(audio_dir: str) -> list[str]:
     )
 
 
+def get_gpu_memory_mb(device_id: int = 0) -> float:
+    result = subprocess.run(
+        ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits",
+         f"--id={device_id}"],
+        capture_output=True, text=True,
+    )
+    return float(result.stdout.strip())
+
+
 def run_benchmark(ct2_path: str, audio_files: list[str], language: str, runs: int) -> dict:
     """Загружает модель и прогоняет её на всех аудиофайлах.
 
@@ -166,13 +178,13 @@ def run_benchmark(ct2_path: str, audio_files: list[str], language: str, runs: in
     from faster_whisper import WhisperModel
 
     print(f"  Загрузка модели из {ct2_path} ...")
-    torch.cuda.empty_cache()
-    torch.cuda.reset_peak_memory_stats()
 
+    vram_before = get_gpu_memory_mb()
     t_load = time.time()
     model = WhisperModel(ct2_path, device="cuda", compute_type="auto", local_files_only=True)
     load_time = time.time() - t_load
-    load_vram_gb = torch.cuda.max_memory_allocated() / 1024 ** 3
+    load_vram_mb = get_gpu_memory_mb() - vram_before
+    load_vram_gb = load_vram_mb / 1024
     print(f"  Загружена за {load_time:.1f}s | VRAM: {load_vram_gb:.2f} GB")
 
     file_results = {}
@@ -185,7 +197,6 @@ def run_benchmark(ct2_path: str, audio_files: list[str], language: str, runs: in
         peak_vram_gb = 0.0
 
         for run_i in range(runs + 1):  # 0 = warm-up
-            torch.cuda.reset_peak_memory_stats()
             t0 = time.time()
 
             segs_gen, info = model.transcribe(
@@ -195,12 +206,11 @@ def run_benchmark(ct2_path: str, audio_files: list[str], language: str, runs: in
                 vad_filter=False,
                 temperature=0.0,
             )
-            text_parts = [s.text for s in segs_gen]  # материализуем генератор
+            text_parts = [s.text for s in segs_gen]
             elapsed = time.time() - t0
-            peak_vram_gb = torch.cuda.max_memory_allocated() / 1024 ** 3
+            peak_vram_gb = (get_gpu_memory_mb() - vram_before) / 1024
 
             if run_i == 0:
-                # warm-up: сохраняем транскрипт, время не учитываем
                 transcript = " ".join(text_parts).strip()
                 audio_duration = info.duration
                 print(f"    warm-up {name}: {elapsed:.2f}s")
@@ -219,7 +229,6 @@ def run_benchmark(ct2_path: str, audio_files: list[str], language: str, runs: in
         }
 
     del model
-    torch.cuda.empty_cache()
     return file_results
 
 
@@ -299,6 +308,8 @@ def main() -> None:
                         help="Какие уровни квантизации тестировать (default: все)")
     parser.add_argument("--skip-convert", action="store_true",
                         help="Пропустить конвертацию — использовать уже существующие модели")
+    parser.add_argument("--stop-service", action="store_true",
+                        help="Остановить whisper.service перед бенчмарком, перезапустить после")
     args = parser.parse_args()
 
     # Аудиофайлы
@@ -315,6 +326,11 @@ def main() -> None:
 
     # Конвертация
     print("\n--- КОНВЕРТАЦИЯ ---")
+    if not args.skip_convert:
+        for d in glob.glob(os.path.join(args.output_dir, f"{model_name}-ct2-*")):
+            if os.path.isdir(d) and not any(Path(d).iterdir()):
+                shutil.rmtree(d)
+                print(f"  Удалена пустая директория: {d}")
     for q in args.quantizations:
         dest = os.path.join(args.output_dir, f"{model_name}-ct2-{q}")
         if args.skip_convert:
@@ -327,23 +343,29 @@ def main() -> None:
                 traceback.print_exc()
 
     # Бенчмарк
-    all_results: dict[str, dict] = {}
-    print("\n--- БЕНЧМАРК ---")
-    for q in args.quantizations:
-        if q not in ct2_paths:
-            print(f"\n[{q}] пропущен (ошибка конвертации)")
-            continue
-        print(f"\n[{q}]")
-        try:
-            all_results[q] = run_benchmark(ct2_paths[q], audio_files, args.language, args.runs)
-        except Exception as e:
-            print(f"  ОШИБКА бенчмарка {q}: {e}")
-            traceback.print_exc()
+    if args.stop_service:
+        subprocess.run(["systemctl", "stop", "whisper.service"], check=True)
+    try:
+        all_results: dict[str, dict] = {}
+        print("\n--- БЕНЧМАРК ---")
+        for q in args.quantizations:
+            if q not in ct2_paths:
+                print(f"\n[{q}] пропущен (ошибка конвертации)")
+                continue
+            print(f"\n[{q}]")
+            try:
+                all_results[q] = run_benchmark(ct2_paths[q], audio_files, args.language, args.runs)
+            except Exception as e:
+                print(f"  ОШИБКА бенчмарка {q}: {e}")
+                traceback.print_exc()
 
-    if all_results:
-        print_results(all_results)
-    else:
-        print("\nНет результатов для вывода.")
+        if all_results:
+            print_results(all_results)
+        else:
+            print("\nНет результатов для вывода.")
+    finally:
+        if args.stop_service:
+            subprocess.run(["systemctl", "start", "whisper.service"], check=False)
 
 
 if __name__ == "__main__":
