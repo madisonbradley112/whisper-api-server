@@ -19,8 +19,10 @@
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import traceback
 from pathlib import Path
@@ -29,6 +31,45 @@ import torch
 
 QUANTIZATIONS = ["float16", "int8_float16", "int8", "int4"]
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".ogg", ".flac", ".m4a", ".opus", ".aac"}
+
+
+# ---------------------------------------------------------------------------
+# Вспомогательные функции
+# ---------------------------------------------------------------------------
+
+def _build_fake_flash_attn(base_dir: str) -> None:
+    """Создаёт заглушку flash_attn пакета в base_dir для подпроцесса конвертации.
+
+    Настоящий файловый Python-пакет надёжнее sys.meta_path мока: не вмешивается
+    во внутренний import-механизм torch._library и inspect.
+    """
+    pkg = os.path.join(base_dir, "flash_attn")
+    os.makedirs(pkg)
+
+    # Корневой __init__.py — содержит атрибуты, которые проверяет transformers
+    with open(os.path.join(pkg, "__init__.py"), "w") as f:
+        f.write(
+            '__version__ = "2.6.0"\n'
+            "flash_attn_func = None\n"
+            "flash_attn_varlen_func = None\n"
+            "flash_attn_with_kvcache = None\n"
+        )
+
+    # Субмодули, которые импортирует transformers.modeling_flash_attention_utils
+    submodules = {
+        "bert_padding": "index_first_axis = None\npad_input = None\nunpad_input = None\n",
+        "flash_attn_interface": "flash_attn_func = None\nflash_attn_varlen_func = None\n",
+        "layers": "RotaryEmbedding = None\n",
+    }
+    for name, content in submodules.items():
+        subdir = os.path.join(pkg, name)
+        os.makedirs(subdir)
+        with open(os.path.join(subdir, "__init__.py"), "w") as f:
+            f.write(content)
+
+    # flash_attn_2_cuda как отдельный модуль (не субпакет flash_attn)
+    with open(os.path.join(base_dir, "flash_attn_2_cuda.py"), "w") as f:
+        f.write("# stub\n")
 
 
 # ---------------------------------------------------------------------------
@@ -54,55 +95,32 @@ def convert_model(src_path: str, out_dir: str, quantization: str) -> str:
     print(f"  Конвертация в {quantization} → {dest}")
     t = time.time()
 
-    # Конвертация в подпроцессе: flash_attn мокируется до импорта ctranslate2,
-    # чтобы обойти конфликт символов ABI (flash_attn_2_cuda vs ctranslate2 libtorch).
-    script = f"""
-import sys, types, importlib.machinery
+    # Конвертация в подпроцессе с поддельным flash_attn пакетом.
+    # Почему подпроцесс: ctranslate2 импортирует transformers, который безусловно тянет
+    # flash_attn_2_cuda.so, скомпилированный под другую версию libtorch.
+    # Решение: создаём настоящий Python-пакет flash_attn на диске и ставим его первым
+    # в PYTHONPATH — Python находит его раньше сломанного пакета в conda.
+    tmpdir = tempfile.mkdtemp(prefix="fake_flash_attn_")
+    try:
+        _build_fake_flash_attn(tmpdir)
+        env = os.environ.copy()
+        env["PYTHONPATH"] = tmpdir + (":" + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
 
-# Универсальный перехватчик: глушит flash_attn и flash_attn_2_cuda целиком.
-# Любой импорт flash_attn.* возвращает заглушку с __getattr__=noop.
+        script = (
+            "import ctranslate2; "
+            f"c = ctranslate2.converters.TransformersConverter({src_path!r}, low_cpu_mem_usage=True); "
+            f"c.convert({dest!r}, quantization={quantization!r}); "
+            "print('ok')"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True, text=True, env=env,
+        )
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
-class _FlashAttnStub(types.ModuleType):
-    def __getattr__(self, name):
-        # __version__ должен быть строкой — transformers проверяет его через packaging.version.parse()
-        if name == '__version__':
-            return '2.6.0'
-        return lambda *a, **k: None
-
-class _FlashAttnFinder:
-    @staticmethod
-    def find_spec(fullname, path, target=None):
-        if fullname == 'flash_attn' or fullname.startswith('flash_attn.') or fullname == 'flash_attn_2_cuda':
-            return importlib.machinery.ModuleSpec(fullname, _FlashAttnLoader(), is_package=fullname in ('flash_attn',))
-        return None
-
-class _FlashAttnLoader:
-    def create_module(self, spec):
-        m = _FlashAttnStub(spec.name)
-        m.__spec__ = spec
-        m.__package__ = spec.name if spec.submodule_search_locations is not None else spec.name.rsplit('.', 1)[0]
-        if spec.submodule_search_locations is not None:
-            m.__path__ = []
-        return m
-    def exec_module(self, module):
-        pass
-
-sys.meta_path.insert(0, _FlashAttnFinder())
-
-import ctranslate2
-converter = ctranslate2.converters.TransformersConverter(
-    {src_path!r}, low_cpu_mem_usage=True,
-)
-converter.convert({dest!r}, quantization={quantization!r})
-print("ok")
-"""
-
-    result = subprocess.run(
-        [sys.executable, "-c", script],
-        capture_output=True, text=True,
-    )
     if result.returncode != 0:
-        raise RuntimeError(result.stderr[-3000:])  # последние 3000 символов ошибки
+        raise RuntimeError(result.stderr[-3000:])
 
     print(f"  Готово за {time.time() - t:.0f}с")
     return dest
