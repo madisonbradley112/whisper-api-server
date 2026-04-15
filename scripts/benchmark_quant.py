@@ -21,6 +21,7 @@
 
 import argparse
 import glob
+import json
 import os
 import shutil
 import subprocess
@@ -189,7 +190,7 @@ def run_benchmark(ct2_path: str, audio_files: list[str], language: str, runs: in
     load_vram_gb = load_vram_mb / 1024
     print(f"  Загружена за {load_time:.1f}s | VRAM: {load_vram_gb:.2f} GB")
 
-    file_results = {}
+    file_results = {"_load_time_s": load_time, "_load_vram_gb": load_vram_gb}
 
     for audio_path in audio_files:
         name = Path(audio_path).name
@@ -272,7 +273,7 @@ def run_benchmark_hf(model_path: str, audio_files: list[str], language: str, run
     load_vram_gb = (get_gpu_memory_mb() - vram_before) / 1024
     print(f"  Загружена за {load_time:.1f}s | VRAM: {load_vram_gb:.2f} GB")
 
-    file_results = {}
+    file_results = {"_load_time_s": load_time, "_load_vram_gb": load_vram_gb}
 
     for audio_path in audio_files:
         name = Path(audio_path).name
@@ -335,7 +336,7 @@ def run_benchmark_gigaam(model_path: str, audio_files: list[str], runs: int) -> 
     load_vram_gb = (get_gpu_memory_mb() - vram_before) / 1024
     print(f"  Загружена за {load_time:.1f}s | VRAM: {load_vram_gb:.2f} GB")
 
-    file_results = {}
+    file_results = {"_load_time_s": load_time, "_load_vram_gb": load_vram_gb}
 
     for audio_path in audio_files:
         name = Path(audio_path).name
@@ -457,6 +458,8 @@ def main() -> None:
     parser.add_argument("--hf-models", nargs="*", default=[],
                         help="HF/GigaAM модели для сравнения: name=path[:lang] [name=path[:lang] ...] "
                              "(lang: russian для HF whisper, опустить для gigaam)")
+    parser.add_argument("--output-json",
+                        help="Путь к JSON-файлу для сохранения полных результатов")
     args = parser.parse_args()
 
     # Аудиофайлы
@@ -500,7 +503,6 @@ def main() -> None:
         path = parts[0]
         lang = parts[1] if len(parts) > 1 else ""
         config_path = os.path.join(path, "config.json")
-        import json
         is_whisper = False
         if os.path.exists(config_path):
             with open(config_path) as f:
@@ -539,6 +541,10 @@ def main() -> None:
 
         if all_results:
             print_results(all_results)
+            if args.output_json:
+                with open(args.output_json, "w", encoding="utf-8") as f:
+                    json.dump(all_results, f, ensure_ascii=False, indent=2)
+                print(f"\n  Результаты сохранены в {args.output_json}")
         else:
             print("\nНет результатов для вывода.")
     finally:
