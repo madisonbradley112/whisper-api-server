@@ -380,7 +380,8 @@ def run_benchmark_gigaam(model_path: str, audio_files: list[str], runs: int) -> 
 def print_results(all_results: dict[str, dict], baseline_name: str = "float16") -> None:
     """Выводит сводную таблицу и транскрипции."""
     quants = list(all_results.keys())
-    file_names = list(next(iter(all_results.values())).keys())
+    first = next(iter(all_results.values()))
+    file_names = [k for k in first if not k.startswith("_")]
 
     W = 112
     SEP = "-" * W
@@ -390,9 +391,9 @@ def print_results(all_results: dict[str, dict], baseline_name: str = "float16") 
     print("=" * W)
 
     for fname in file_names:
-        baseline = all_results.get(baseline_name, {}).get(fname, {})
-        baseline_avg = baseline.get("avg_s") or 0.0
-        audio_dur = baseline.get("audio_duration_s", 0.0)
+        baseline = all_results.get(baseline_name, {})
+        baseline_avg = baseline.get(fname, {}).get("avg_s") or 0.0 if fname in baseline else 0.0
+        audio_dur = baseline.get(fname, {}).get("audio_duration_s", 0.0) if fname in baseline else 0.0
 
         print(f"\n  Файл: {fname}  (длительность: {audio_dur:.1f}s)")
         print(SEP)
