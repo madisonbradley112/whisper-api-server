@@ -4,6 +4,7 @@
 
 Конвертирует исходную HuggingFace-модель в 4 формата (float16, int8_float16, int8, int8_bfloat16)
 и прогоняет каждый вариант на всех аудиофайлах из указанной директории.
+Также поддерживает тестирование HF Transformers и GigaAM моделей для сравнения.
 Выводит таблицу сравнения скорости, потребления VRAM и RTF,
 а также транскрипции для визуальной оценки качества.
 
@@ -14,7 +15,8 @@
     python benchmark_quant.py \
         --model /home/text-generation/models/whisper/antony-ties-podlodka-v1.2 \
         --audio-dir /home/text-generation/bench/whisper \
-        --output-dir /home/text-generation/models/whisper
+        --output-dir /home/text-generation/models/whisper \
+        --hf-models podlodka-turbo=/path/to/model gigaam=/path/to/gigaAM-v3
 """
 
 import argparse
@@ -232,11 +234,162 @@ def run_benchmark(ct2_path: str, audio_files: list[str], language: str, runs: in
     return file_results
 
 
+def run_benchmark_hf(model_path: str, audio_files: list[str], language: str, runs: int) -> dict:
+    """Бенчмарк HF Transformers Whisper модели (podlodka-turbo и аналогичные)."""
+    import torch
+    from transformers import WhisperForConditionalGeneration, WhisperProcessor, pipeline
+
+    print(f"  Загрузка HF модели из {model_path} ...")
+
+    device = torch.device("cuda:0")
+    dtype = torch.bfloat16
+
+    vram_before = get_gpu_memory_mb()
+    t_load = time.time()
+    model_kwargs = dict(torch_dtype=dtype, low_cpu_mem_usage=True, use_safetensors=True)
+    try:
+        capability = torch.cuda.get_device_capability(0)
+        if capability[0] >= 8:
+            model_kwargs["attn_implementation"] = "flash_attention_2"
+    except Exception:
+        pass
+
+    model = WhisperForConditionalGeneration.from_pretrained(model_path, **model_kwargs).to(device)
+    processor = WhisperProcessor.from_pretrained(model_path)
+
+    asr_pipeline = pipeline(
+        "automatic-speech-recognition",
+        model=model,
+        tokenizer=processor.tokenizer,
+        feature_extractor=processor.feature_extractor,
+        chunk_length_s=28,
+        batch_size=6,
+        torch_dtype=dtype,
+        device=device,
+    )
+
+    load_time = time.time() - t_load
+    load_vram_gb = (get_gpu_memory_mb() - vram_before) / 1024
+    print(f"  Загружена за {load_time:.1f}s | VRAM: {load_vram_gb:.2f} GB")
+
+    file_results = {}
+
+    for audio_path in audio_files:
+        name = Path(audio_path).name
+        times = []
+        transcript = ""
+        audio_duration = 0.0
+        peak_vram_gb = 0.0
+
+        for run_i in range(runs + 1):
+            t0 = time.time()
+
+            import numpy as np
+            from scipy.io import wavfile
+            import subprocess as _sp
+
+            result_decode = _sp.run(
+                ["ffmpeg", "-i", audio_path, "-f", "s16le", "-ac", "1", "-ar", "16000", "-"],
+                capture_output=True,
+            )
+            audio_np = np.frombuffer(result_decode.stdout, dtype=np.int16).astype(np.float32) / 32768.0
+            elapsed = time.time() - t0
+
+            if run_i == 0:
+                result = asr_pipeline(
+                    {"raw": audio_np, "sampling_rate": 16000},
+                    generate_kwargs={"language": language, "max_new_tokens": 384, "temperature": 0.01},
+                )
+                elapsed = time.time() - t0
+                transcript = result.get("text", "").strip()
+                peak_vram_gb = (get_gpu_memory_mb() - vram_before) / 1024
+                audio_duration = len(audio_np) / 16000.0
+                print(f"    warm-up {name}: {elapsed:.2f}s")
+            else:
+                result = asr_pipeline(
+                    {"raw": audio_np, "sampling_rate": 16000},
+                    generate_kwargs={"language": language, "max_new_tokens": 384, "temperature": 0.01},
+                )
+                elapsed = time.time() - t0
+                peak_vram_gb = (get_gpu_memory_mb() - vram_before) / 1024
+                times.append(elapsed)
+                print(f"    run {run_i}/{runs}  {name}: {elapsed:.2f}s  peak VRAM: {peak_vram_gb:.2f} GB")
+
+        avg = sum(times) / len(times) if times else 0.0
+        file_results[name] = {
+            "avg_s": avg,
+            "min_s": min(times) if times else 0.0,
+            "peak_vram_gb": peak_vram_gb,
+            "rtf": avg / audio_duration if audio_duration else 0.0,
+            "audio_duration_s": audio_duration,
+            "transcript": transcript,
+        }
+
+    del model, asr_pipeline
+    torch.cuda.empty_cache()
+    return file_results
+
+
+def run_benchmark_gigaam(model_path: str, audio_files: list[str], runs: int) -> dict:
+    """Бенчмарк GigaAM-v3 модели."""
+    import gigaam
+    from gigaam.preprocess import load_audio as gigaam_load_audio, SAMPLE_RATE
+
+    print(f"  Загрузка GigaAM модели из {model_path} ...")
+
+    vram_before = get_gpu_memory_mb()
+    t_load = time.time()
+    model = gigaam.load_model("v3_e2e_rnnt")
+    load_time = time.time() - t_load
+    load_vram_gb = (get_gpu_memory_mb() - vram_before) / 1024
+    print(f"  Загружена за {load_time:.1f}s | VRAM: {load_vram_gb:.2f} GB")
+
+    file_results = {}
+
+    for audio_path in audio_files:
+        name = Path(audio_path).name
+        times = []
+        transcript = ""
+        audio_duration = 0.0
+        peak_vram_gb = 0.0
+
+        for run_i in range(runs + 1):
+            t0 = time.time()
+
+            if run_i == 0:
+                audio_tensor = gigaam_load_audio(audio_path)
+                audio_duration = audio_tensor.shape[0] / SAMPLE_RATE
+                result = model.transcribe_longform(audio_path)
+                elapsed = time.time() - t0
+                transcript = " ".join(seg.text for seg in result).strip()
+                peak_vram_gb = (get_gpu_memory_mb() - vram_before) / 1024
+                print(f"    warm-up {name}: {elapsed:.2f}s")
+            else:
+                result = model.transcribe_longform(audio_path)
+                elapsed = time.time() - t0
+                peak_vram_gb = (get_gpu_memory_mb() - vram_before) / 1024
+                times.append(elapsed)
+                print(f"    run {run_i}/{runs}  {name}: {elapsed:.2f}s  peak VRAM: {peak_vram_gb:.2f} GB")
+
+        avg = sum(times) / len(times) if times else 0.0
+        file_results[name] = {
+            "avg_s": avg,
+            "min_s": min(times) if times else 0.0,
+            "peak_vram_gb": peak_vram_gb,
+            "rtf": avg / audio_duration if audio_duration else 0.0,
+            "audio_duration_s": audio_duration,
+            "transcript": transcript,
+        }
+
+    del model
+    return file_results
+
+
 # ---------------------------------------------------------------------------
 # Вывод таблицы
 # ---------------------------------------------------------------------------
 
-def print_results(all_results: dict[str, dict]) -> None:
+def print_results(all_results: dict[str, dict], baseline_name: str = "float16") -> None:
     """Выводит сводную таблицу и транскрипции."""
     quants = list(all_results.keys())
     file_names = list(next(iter(all_results.values())).keys())
@@ -249,7 +402,7 @@ def print_results(all_results: dict[str, dict]) -> None:
     print("=" * W)
 
     for fname in file_names:
-        baseline = all_results.get("float16", {}).get(fname, {})
+        baseline = all_results.get(baseline_name, {}).get(fname, {})
         baseline_avg = baseline.get("avg_s") or 0.0
         audio_dur = baseline.get("audio_duration_s", 0.0)
 
@@ -264,7 +417,7 @@ def print_results(all_results: dict[str, dict]) -> None:
             min_t = r.get("min_s", 0.0)
             rtf = r.get("rtf", 0.0)
             vram = r.get("peak_vram_gb", 0.0)
-            if q == "float16" or baseline_avg == 0:
+            if q == baseline_name or baseline_avg == 0:
                 speedup_str = "baseline"
             else:
                 speedup_str = f"{baseline_avg / avg:.2f}x" if avg else "—"
@@ -310,6 +463,9 @@ def main() -> None:
                         help="Пропустить конвертацию — использовать уже существующие модели")
     parser.add_argument("--stop-service", action="store_true",
                         help="Остановить whisper.service перед бенчмарком, перезапустить после")
+    parser.add_argument("--hf-models", nargs="*", default=[],
+                        help="HF/GigaAM модели для сравнения: name=path [name=path ...] "
+                             "(тип auto: gigaam если нет config.json с model_type=whisper)")
     args = parser.parse_args()
 
     # Аудиофайлы
@@ -342,6 +498,23 @@ def main() -> None:
                 print(f"  ОШИБКА конвертации {q}: {e}")
                 traceback.print_exc()
 
+    # HF / GigaAM модели
+    hf_models: dict[str, tuple[str, str]] = {}
+    for item in args.hf_models:
+        if "=" not in item:
+            print(f"  ОШИБКА: --hf-models формат: name=path (получено: {item})")
+            return
+        name, path = item.split("=", 1)
+        config_path = os.path.join(path, "config.json")
+        import json
+        is_whisper = False
+        if os.path.exists(config_path):
+            with open(config_path) as f:
+                cfg = json.load(f)
+            is_whisper = cfg.get("model_type") == "whisper"
+        model_type = "whisper" if is_whisper else "gigaam"
+        hf_models[name] = (path, model_type)
+
     # Бенчмарк
     if args.stop_service:
         subprocess.run(["systemctl", "stop", "whisper.service"], check=True)
@@ -357,6 +530,17 @@ def main() -> None:
                 all_results[q] = run_benchmark(ct2_paths[q], audio_files, args.language, args.runs)
             except Exception as e:
                 print(f"  ОШИБКА бенчмарка {q}: {e}")
+                traceback.print_exc()
+
+        for name, (path, model_type) in hf_models.items():
+            print(f"\n[{name}] ({model_type})")
+            try:
+                if model_type == "whisper":
+                    all_results[name] = run_benchmark_hf(path, audio_files, args.language, args.runs)
+                else:
+                    all_results[name] = run_benchmark_gigaam(path, audio_files, args.runs)
+            except Exception as e:
+                print(f"  ОШИБКА бенчмарка {name}: {e}")
                 traceback.print_exc()
 
         if all_results:
