@@ -248,12 +248,6 @@ def run_benchmark_hf(model_path: str, audio_files: list[str], language: str, run
     vram_before = get_gpu_memory_mb()
     t_load = time.time()
     model_kwargs = dict(torch_dtype=dtype, low_cpu_mem_usage=True, use_safetensors=True)
-    try:
-        capability = torch.cuda.get_device_capability(0)
-        if capability[0] >= 8:
-            model_kwargs["attn_implementation"] = "flash_attention_2"
-    except Exception:
-        pass
 
     model = WhisperForConditionalGeneration.from_pretrained(model_path, **model_kwargs).to(device)
     processor = WhisperProcessor.from_pretrained(model_path)
