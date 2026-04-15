@@ -64,7 +64,9 @@ import sys, types, importlib.machinery
 
 class _FlashAttnStub(types.ModuleType):
     def __getattr__(self, name):
-        # Возвращаем callable-заглушку для любого атрибута
+        # __version__ должен быть строкой — transformers проверяет его через packaging.version.parse()
+        if name == '__version__':
+            return '2.6.0'
         return lambda *a, **k: None
 
 class _FlashAttnFinder:
