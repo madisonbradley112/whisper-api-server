@@ -72,7 +72,7 @@ def _build_fake_flash_attn(base_dir: str) -> None:
     with open(os.path.join(layers_dir, "__init__.py"), "w") as f:
         f.write("RotaryEmbedding = None\n")
     with open(os.path.join(layers_dir, "rotary.py"), "w") as f:
-        f.write("RotaryEmbedding = None\n")
+        f.write("RotaryEmbedding = None\napply_rotary_emb = None\n")
 
     # flash_attn_2_cuda как отдельный модуль (не субпакет flash_attn)
     with open(os.path.join(base_dir, "flash_attn_2_cuda.py"), "w") as f:
