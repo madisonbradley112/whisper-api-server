@@ -281,37 +281,28 @@ def run_benchmark_hf(model_path: str, audio_files: list[str], language: str, run
         audio_duration = 0.0
         peak_vram_gb = 0.0
 
+        import numpy as np
+        import subprocess as _sp
+        result_decode = _sp.run(
+            ["ffmpeg", "-i", audio_path, "-f", "s16le", "-ac", "1", "-ar", "16000", "-"],
+            capture_output=True,
+        )
+        audio_np = np.frombuffer(result_decode.stdout, dtype=np.int16).astype(np.float32) / 32768.0
+        audio_duration = len(audio_np) / 16000.0
+        gen_kwargs = {"language": language, "max_new_tokens": 384, "temperature": 0.01}
+        input_data = {"raw": audio_np, "sampling_rate": 16000}
+
         for run_i in range(runs + 1):
             t0 = time.time()
 
-            import numpy as np
-            from scipy.io import wavfile
-            import subprocess as _sp
-
-            result_decode = _sp.run(
-                ["ffmpeg", "-i", audio_path, "-f", "s16le", "-ac", "1", "-ar", "16000", "-"],
-                capture_output=True,
-            )
-            audio_np = np.frombuffer(result_decode.stdout, dtype=np.int16).astype(np.float32) / 32768.0
+            result = asr_pipeline(input_data, generate_kwargs=gen_kwargs)
             elapsed = time.time() - t0
+            peak_vram_gb = (get_gpu_memory_mb() - vram_before) / 1024
 
             if run_i == 0:
-                result = asr_pipeline(
-                    {"raw": audio_np, "sampling_rate": 16000},
-                    generate_kwargs={"language": language, "max_new_tokens": 384, "temperature": 0.01},
-                )
-                elapsed = time.time() - t0
                 transcript = result.get("text", "").strip()
-                peak_vram_gb = (get_gpu_memory_mb() - vram_before) / 1024
-                audio_duration = len(audio_np) / 16000.0
                 print(f"    warm-up {name}: {elapsed:.2f}s")
             else:
-                result = asr_pipeline(
-                    {"raw": audio_np, "sampling_rate": 16000},
-                    generate_kwargs={"language": language, "max_new_tokens": 384, "temperature": 0.01},
-                )
-                elapsed = time.time() - t0
-                peak_vram_gb = (get_gpu_memory_mb() - vram_before) / 1024
                 times.append(elapsed)
                 print(f"    run {run_i}/{runs}  {name}: {elapsed:.2f}s  peak VRAM: {peak_vram_gb:.2f} GB")
 
@@ -464,8 +455,8 @@ def main() -> None:
     parser.add_argument("--stop-service", action="store_true",
                         help="Остановить whisper.service перед бенчмарком, перезапустить после")
     parser.add_argument("--hf-models", nargs="*", default=[],
-                        help="HF/GigaAM модели для сравнения: name=path [name=path ...] "
-                             "(тип auto: gigaam если нет config.json с model_type=whisper)")
+                        help="HF/GigaAM модели для сравнения: name=path[:lang] [name=path[:lang] ...] "
+                             "(lang: russian для HF whisper, опустить для gigaam)")
     args = parser.parse_args()
 
     # Аудиофайлы
@@ -499,12 +490,15 @@ def main() -> None:
                 traceback.print_exc()
 
     # HF / GigaAM модели
-    hf_models: dict[str, tuple[str, str]] = {}
+    hf_models: dict[str, tuple[str, str, str]] = {}  # name -> (path, model_type, language)
     for item in args.hf_models:
         if "=" not in item:
-            print(f"  ОШИБКА: --hf-models формат: name=path (получено: {item})")
+            print(f"  ОШИБКА: --hf-models формат: name=path[:lang] (получено: {item})")
             return
-        name, path = item.split("=", 1)
+        name, rest = item.split("=", 1)
+        parts = rest.split(":", 1)
+        path = parts[0]
+        lang = parts[1] if len(parts) > 1 else ""
         config_path = os.path.join(path, "config.json")
         import json
         is_whisper = False
@@ -513,7 +507,7 @@ def main() -> None:
                 cfg = json.load(f)
             is_whisper = cfg.get("model_type") == "whisper"
         model_type = "whisper" if is_whisper else "gigaam"
-        hf_models[name] = (path, model_type)
+        hf_models[name] = (path, model_type, lang)
 
     # Бенчмарк
     if args.stop_service:
@@ -532,11 +526,11 @@ def main() -> None:
                 print(f"  ОШИБКА бенчмарка {q}: {e}")
                 traceback.print_exc()
 
-        for name, (path, model_type) in hf_models.items():
+        for name, (path, model_type, lang) in hf_models.items():
             print(f"\n[{name}] ({model_type})")
             try:
                 if model_type == "whisper":
-                    all_results[name] = run_benchmark_hf(path, audio_files, args.language, args.runs)
+                    all_results[name] = run_benchmark_hf(path, audio_files, lang or args.language, args.runs)
                 else:
                     all_results[name] = run_benchmark_gigaam(path, audio_files, args.runs)
             except Exception as e:
