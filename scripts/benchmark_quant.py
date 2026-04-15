@@ -448,9 +448,9 @@ def main() -> None:
                         help="Язык транскрибации (default: ru)")
     parser.add_argument("--runs", type=int, default=3,
                         help="Кол-во измерительных прогонов на файл, не считая warm-up (default: 3)")
-    parser.add_argument("--quantizations", nargs="+", default=QUANTIZATIONS,
+    parser.add_argument("--quantizations", nargs="*", default=QUANTIZATIONS,
                         choices=QUANTIZATIONS,
-                        help="Какие уровни квантизации тестировать (default: все)")
+                        help="Какие уровни квантизации тестировать (default: все). Без аргументов — пропустить CT2.")
     parser.add_argument("--skip-convert", action="store_true",
                         help="Пропустить конвертацию — использовать уже существующие модели")
     parser.add_argument("--stop-service", action="store_true",
