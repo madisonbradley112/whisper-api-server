@@ -59,31 +59,33 @@ def convert_model(src_path: str, out_dir: str, quantization: str) -> str:
     script = f"""
 import sys, types, importlib.machinery
 
-def _stub(name, is_package=False):
-    m = types.ModuleType(name)
-    m.__spec__ = importlib.machinery.ModuleSpec(name, loader=None, is_package=is_package)
-    m.__package__ = name if is_package else (name.rsplit('.', 1)[0] if '.' in name else '')
-    if is_package:
-        m.__path__ = []
-    return m
+# Универсальный перехватчик: глушит flash_attn и flash_attn_2_cuda целиком.
+# Любой импорт flash_attn.* возвращает заглушку с __getattr__=noop.
 
-_noop = lambda *a, **k: None
+class _FlashAttnStub(types.ModuleType):
+    def __getattr__(self, name):
+        # Возвращаем callable-заглушку для любого атрибута
+        return lambda *a, **k: None
 
-fa = _stub('flash_attn', is_package=True)
-fa.flash_attn_func           = _noop
-fa.flash_attn_varlen_func    = _noop
-fa.flash_attn_with_kvcache   = _noop
-sys.modules['flash_attn'] = fa
+class _FlashAttnFinder:
+    @staticmethod
+    def find_spec(fullname, path, target=None):
+        if fullname == 'flash_attn' or fullname.startswith('flash_attn.') or fullname == 'flash_attn_2_cuda':
+            return importlib.machinery.ModuleSpec(fullname, _FlashAttnLoader(), is_package=fullname in ('flash_attn',))
+        return None
 
-sys.modules['flash_attn_2_cuda']               = _stub('flash_attn_2_cuda')
-sys.modules['flash_attn.flash_attn_interface']  = _stub('flash_attn.flash_attn_interface')
-sys.modules['flash_attn.flash_attn_varlen_func'] = _stub('flash_attn.flash_attn_varlen_func')
+class _FlashAttnLoader:
+    def create_module(self, spec):
+        m = _FlashAttnStub(spec.name)
+        m.__spec__ = spec
+        m.__package__ = spec.name if spec.submodule_search_locations is not None else spec.name.rsplit('.', 1)[0]
+        if spec.submodule_search_locations is not None:
+            m.__path__ = []
+        return m
+    def exec_module(self, module):
+        pass
 
-bp = _stub('flash_attn.bert_padding')
-bp.index_first_axis = _noop
-bp.pad_input        = _noop
-bp.unpad_input      = _noop
-sys.modules['flash_attn.bert_padding'] = bp
+sys.meta_path.insert(0, _FlashAttnFinder())
 
 import ctranslate2
 converter = ctranslate2.converters.TransformersConverter(
