@@ -57,23 +57,26 @@ def convert_model(src_path: str, out_dir: str, quantization: str) -> str:
     # Конвертация в подпроцессе: flash_attn мокируется до импорта ctranslate2,
     # чтобы обойти конфликт символов ABI (flash_attn_2_cuda vs ctranslate2 libtorch).
     script = f"""
-import sys, types
+import sys, types, importlib.machinery
 
-def _stub(name):
+def _stub(name, is_package=False):
     m = types.ModuleType(name)
-    m.__spec__ = None
+    m.__spec__ = importlib.machinery.ModuleSpec(name, loader=None, is_package=is_package)
+    m.__package__ = name if is_package else (name.rsplit('.', 1)[0] if '.' in name else '')
+    if is_package:
+        m.__path__ = []
     return m
 
-for _n in ['flash_attn', 'flash_attn_2_cuda',
-           'flash_attn.flash_attn_interface',
-           'flash_attn.bert_padding',
-           'flash_attn.flash_attn_varlen_func']:
-    sys.modules[_n] = _stub(_n)
+sys.modules['flash_attn']                     = _stub('flash_attn', is_package=True)
+sys.modules['flash_attn_2_cuda']              = _stub('flash_attn_2_cuda')
+sys.modules['flash_attn.flash_attn_interface'] = _stub('flash_attn.flash_attn_interface')
+sys.modules['flash_attn.bert_padding']         = _stub('flash_attn.bert_padding')
+sys.modules['flash_attn.flash_attn_varlen_func'] = _stub('flash_attn.flash_attn_varlen_func')
 
 bp = sys.modules['flash_attn.bert_padding']
 bp.index_first_axis = lambda *a, **k: None
-bp.pad_input = lambda *a, **k: None
-bp.unpad_input = lambda *a, **k: None
+bp.pad_input        = lambda *a, **k: None
+bp.unpad_input      = lambda *a, **k: None
 
 import ctranslate2
 converter = ctranslate2.converters.TransformersConverter(
