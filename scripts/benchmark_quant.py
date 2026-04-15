@@ -67,16 +67,23 @@ def _stub(name, is_package=False):
         m.__path__ = []
     return m
 
-sys.modules['flash_attn']                     = _stub('flash_attn', is_package=True)
-sys.modules['flash_attn_2_cuda']              = _stub('flash_attn_2_cuda')
-sys.modules['flash_attn.flash_attn_interface'] = _stub('flash_attn.flash_attn_interface')
-sys.modules['flash_attn.bert_padding']         = _stub('flash_attn.bert_padding')
+_noop = lambda *a, **k: None
+
+fa = _stub('flash_attn', is_package=True)
+fa.flash_attn_func           = _noop
+fa.flash_attn_varlen_func    = _noop
+fa.flash_attn_with_kvcache   = _noop
+sys.modules['flash_attn'] = fa
+
+sys.modules['flash_attn_2_cuda']               = _stub('flash_attn_2_cuda')
+sys.modules['flash_attn.flash_attn_interface']  = _stub('flash_attn.flash_attn_interface')
 sys.modules['flash_attn.flash_attn_varlen_func'] = _stub('flash_attn.flash_attn_varlen_func')
 
-bp = sys.modules['flash_attn.bert_padding']
-bp.index_first_axis = lambda *a, **k: None
-bp.pad_input        = lambda *a, **k: None
-bp.unpad_input      = lambda *a, **k: None
+bp = _stub('flash_attn.bert_padding')
+bp.index_first_axis = _noop
+bp.pad_input        = _noop
+bp.unpad_input      = _noop
+sys.modules['flash_attn.bert_padding'] = bp
 
 import ctranslate2
 converter = ctranslate2.converters.TransformersConverter(
