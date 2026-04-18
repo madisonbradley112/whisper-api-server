@@ -24,6 +24,7 @@ _MIME_EQUIVALENTS = {
     "video/webm": "audio/webm",
     "video/ogg": "audio/ogg",
     "video/mp4": "audio/mp4",
+    "video/3gpp": "audio/mp4",
 }
 
 
