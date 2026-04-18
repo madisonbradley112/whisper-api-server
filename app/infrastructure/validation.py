@@ -25,6 +25,7 @@ _MIME_EQUIVALENTS = {
     "video/ogg": "audio/ogg",
     "video/mp4": "audio/mp4",
     "video/3gpp": "audio/mp4",
+    "audio/opus": "audio/ogg",
 }
 
 
