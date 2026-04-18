@@ -1,0 +1,17 @@
+services:
+  whisper-api:
+    build: .
+    image: whisper-api:latest
+    restart: unless-stopped
+    ports:
+      - "5042:5042"
+    volumes:
+      - .:/app                                                          # код — обновление без пересборки
+      - /home/text-generation/models:/home/text-generation/models:ro   # модели
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

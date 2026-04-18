@@ -1,0 +1,12 @@
+.git
+.claude
+__pycache__
+*.pyc
+*.pyo
+logs/
+history/
+models/
+plans/
+*.png
+server.sh
+config.json.v*

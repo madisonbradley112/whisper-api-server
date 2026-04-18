@@ -9,7 +9,12 @@
       "Bash(scp app/audio/processor.py orange:/home/text-generation/servers/whisper-api/app/audio/processor.py)",
       "Bash(scp app/core/transcriber.py orange:/home/text-generation/servers/whisper-api/app/core/transcriber.py)",
       "Bash(scp app/core/transcription_service.py orange:/home/text-generation/servers/whisper-api/app/core/transcription_service.py)",
-      "Bash(ssh root@orange \"systemctl status whisper.service\")"
+      "Bash(ssh root@orange \"systemctl status whisper.service\")",
+      "Bash(scp app/infrastructure/validation.py orange:/home/text-generation/servers/whisper-api/app/infrastructure/validation.py)",
+      "Bash(ssh root@orange \"systemctl status whisper.service --no-pager\")",
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)",
+      "Bash(git pull:*)"
     ]
   }
 }

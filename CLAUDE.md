@@ -4,6 +4,8 @@ Local, OpenAI-compatible speech recognition API service using the Whisper model.
 
 **Development rules and coding standards: see `RULES.md`**
 
+**Agent language: always think and respond in English, regardless of the user's language.**
+
 ## Tech Stack
 
 * **Backend**: Python 3.12+, Flask, Waitress (WSGI). Entry: `server.py`.
