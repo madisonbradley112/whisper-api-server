@@ -101,6 +101,8 @@ class GigaAMTranscriber:
         Также патчит segment_audio_file, чтобы передавать аудио как waveform —
         это обходит зависимость pyannote 4.x от torchcodec для декодирования файлов.
         """
+        os.environ["PYANNOTE_METRICS_ENABLED"] = "0"
+
         import gigaam.vad_utils as vad_utils
         from gigaam.preprocess import load_audio as gigaam_load_audio, SAMPLE_RATE
         from pyannote.audio import Model
