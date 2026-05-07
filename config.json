@@ -1,7 +1,7 @@
 {
     "service_port": 5042,
-    "model_path": "/home/text-generation/models/whisper/podlodka-turbo",
-    "language": "russian",
+    "model_path": "openai/whisper-large-v3",
+    "language": "english",
     "enable_history": true,
     "max_history_days": 30,
     "chunk_length_s": 28,
@@ -16,7 +16,7 @@
     "file_validation": {
         "max_file_size_mb": 500,
         "allowed_extensions": [".wav", ".mp3", ".ogg", ".flac", ".m4a", ".oga", ".aac", ".webm"],
-        "allowed_mime_types": ["audio/wav", "audio/mpeg", "audio/ogg", "audio/flac", "audio/mp4", "audio/x-m4a", "audio/aac", "audio/webm"]
+        "allowed_mime_types": ["audio/wav", "audio/x-wav", "audio/mpeg", "audio/ogg", "audio/flac", "audio/mp4", "audio/x-m4a", "audio/aac", "audio/webm", "video/webm"]
     },
     "log_level": "INFO",
     "log_file": "logs/whisper_api.log",

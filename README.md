@@ -125,7 +125,7 @@ The service is configured through the `config.json` file:
 
 The service includes a user-friendly web interface accessible at:
 ```
-http://localhost:5042/
+ youhttp://localhost:5042/
 ```
 
 The interface allows you to:

@@ -34,8 +34,8 @@ class FileValidator:
         self.max_file_size_mb = self.validation_config.get("max_file_size_mb", 100)
         self.allowed_extensions = self.validation_config.get("allowed_extensions", 
                                                              [".wav", ".mp3", ".ogg", ".flac", ".m4a"])
-        self.allowed_mime_types = self.validation_config.get("allowed_mime_types", 
-                                                            ["audio/wav", "audio/mpeg", "audio/ogg", 
+        self.allowed_mime_types = self.validation_config.get("allowed_mime_types",
+                                                            ["audio/wav", "audio/x-wav", "audio/mpeg", "audio/ogg",
                                                              "audio/flac", "audio/mp4"])
     
     def _validate_file_extension(self, filename: str) -> None:

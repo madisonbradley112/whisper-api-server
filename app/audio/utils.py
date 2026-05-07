@@ -61,17 +61,30 @@ def get_audio_duration(file_path: str) -> float:
     cmd = [
         "ffprobe",
         "-v", "error",
-        "-show_entries", "format=duration",
+        "-show_entries", "format=duration:stream=duration",
         "-of", "default=noprint_wrappers=1:nokey=1",
         file_path
     ]
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=10)
-        return float(result.stdout.strip())
+        for line in result.stdout.strip().splitlines():
+            stripped = line.strip()
+            if stripped and stripped != "N/A":
+                return float(stripped)
     except subprocess.TimeoutExpired:
         raise Exception(f"Таймаут при определении длительности файла {file_path}")
     except subprocess.CalledProcessError as e:
         raise Exception(f"Ошибка ffprobe для файла {file_path}: {e.stderr}")
     except (ValueError, TypeError) as e:
         raise Exception(f"Ошибка при преобразовании длительности для файла {file_path}: {e}")
+
+    # ffprobe returned N/A — fall back to wave header for WAV files
+    try:
+        with wave.open(file_path, 'rb') as wav_file:
+            return wav_file.getnframes() / wav_file.getframerate()
+    except Exception:
+        pass
+
+    logger.warning("Не удалось определить длительность файла %s, возвращаем 0.0", file_path)
+    return 0.0
