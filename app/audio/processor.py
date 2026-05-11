@@ -59,10 +59,11 @@ class AudioProcessor:
             "ffmpeg",
             "-hide_banner",
             "-loglevel", "warning",
+            "-fflags", "+genpts",  # generate timestamps for browser webm (Duration: N/A)
             "-y",
             "-i", input_path,
             "-ar", f"{audio_rate}",
-            "-ac", "1",  # Монофонический звук
+            "-ac", "1",
             output_path
         ]
         
@@ -78,31 +79,23 @@ class AudioProcessor:
     
     def normalize_audio(self, input_path: str) -> str:
         """
-        Нормализация аудиофайла с использованием sox.
-        
-        Args:
-            input_path: Путь к WAV-файлу.
-            
-        Returns:
-            Путь к нормализованному WAV-файлу.
-            
-        Raises:
-            subprocess.CalledProcessError: Если произошла ошибка при нормализации.
+        Нормализация аудиофайла с использованием ffmpeg loudnorm.
+        Targets -16 LUFS, which is optimal for speech-to-text.
         """
-        # Создаем временный файл для нормализованного аудио
         output_path = create_temp_file("_normalized.wav")
-        
-        # Команда для нормализации аудио с помощью sox
+
         cmd = [
-            "sox", 
-            input_path, 
-            output_path, 
-            "norm", self.norm_level,
-            "compand"
-        ] + self.compand_params.split()
-        
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel", "warning",
+            "-y",
+            "-i", input_path,
+            "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
+            output_path
+        ]
+
         logger.debug("Нормализация аудио: %s", " ".join(cmd))
-        
+
         try:
             subprocess.run(cmd, check=True, capture_output=True)
             logger.info("Аудио нормализовано: %s", output_path)
@@ -132,7 +125,7 @@ class AudioProcessor:
             "sox",
             input_path,
             output_path,
-            "pad", "2.0", "1.0"  # Добавление тишины в начале и в конце (секунды)
+            "pad", "0.25", "0.1"  # Добавление тишины в начале и в конце (секунды)
         ]
         
         logger.info("Добавление тишины: %s", " ".join(cmd))
@@ -161,20 +154,12 @@ class AudioProcessor:
         temp_files = []
         
         try:
-            # Конвертация в WAV
+            # Convert to 16kHz mono WAV — faster-whisper handles normalization internally
             wav_path = self.convert_to_wav(input_path)
-            if wav_path != input_path:  # Если был создан временный файл
+            if wav_path != input_path:
                 temp_files.append(wav_path)
-            
-            # Нормализация
-            normalized_path = self.normalize_audio(wav_path)
-            temp_files.append(normalized_path)
 
-            # Добавление тишины
-            silence_path = self.add_silence(normalized_path)
-            temp_files.append(silence_path)
-            
-            return silence_path, temp_files
+            return wav_path, temp_files
         
         except Exception as e:
             logger.error("Ошибка при обработке аудио %s: %s", input_path, e)
